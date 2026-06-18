@@ -6,6 +6,10 @@
   "bin": {
     "kleap": "kleap-mcp-server.mjs"
   },
+  "scripts": {
+    "test": "node test/smoke.mjs",
+    "start": "node kleap-mcp-server.mjs"
+  },
   "files": [
     "kleap-mcp-server.mjs",
     "skill",

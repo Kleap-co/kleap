@@ -219,7 +219,7 @@ const TOOLS = [
 ];
 
 const server = new Server(
-  { name: "kleap", version: "0.1.0" },
+  { name: "kleap", version: "1.0.0" },
   { capabilities: { tools: {} } },
 );
 
