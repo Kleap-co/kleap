@@ -1,0 +1,43 @@
+{
+  "name": "kleap",
+  "version": "1.0.0",
+  "description": "Website infrastructure for AI agents. Drive Kleap from any MCP client (Claude, ChatGPT, Cursor) — create, edit and publish real websites, with the verified-live guarantee.",
+  "type": "module",
+  "bin": {
+    "kleap": "kleap-mcp-server.mjs"
+  },
+  "files": [
+    "kleap-mcp-server.mjs",
+    "skill",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "kleap",
+    "ai-agent",
+    "website-builder",
+    "claude",
+    "chatgpt",
+    "cursor",
+    "ai",
+    "publish"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kleap-co/kleap.git"
+  },
+  "homepage": "https://kleap.co/mcp",
+  "bugs": {
+    "url": "https://github.com/Kleap-co/kleap/issues"
+  },
+  "license": "MIT",
+  "author": "Kleap"
+}
