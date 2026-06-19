@@ -43,22 +43,59 @@ if (!API_KEY) {
 }
 
 const TIMEOUT_MS = Number(process.env.KLEAP_TIMEOUT_MS) || 30000;
-const MAX_RETRIES = 2; // transient network / 5xx only
+const MAX_RETRIES = 2;
 
-/** Extract a clean, agent-readable error from a JSON body or non-JSON text. */
-function errorMessage(parsed, status, method, path) {
-  if (parsed && typeof parsed === "object") {
-    const e = parsed.error;
-    const msg = (e && (e.message || e.code)) || parsed.message;
-    if (msg) return `${msg} (HTTP ${status})`;
-    return `Kleap API error (HTTP ${status})`;
+// Refuse to send the API key anywhere but kleap.co over HTTPS (or localhost for
+// dev). Prevents KLEAP_API_URL from exfiltrating the Bearer key to any host.
+{
+  let u;
+  try {
+    u = new URL(API_URL);
+  } catch {
+    console.error(`[kleap-mcp] Invalid KLEAP_API_URL: ${API_URL}`);
+    process.exit(1);
   }
-  // Non-JSON (e.g. an HTML 404/5xx page) — don't dump markup at the agent.
-  return `Kleap API returned a non-JSON ${status} response for ${method} ${path}`;
+  const isLocal = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+  const isKleap = u.hostname === "kleap.co" || u.hostname.endsWith(".kleap.co");
+  if (!isLocal && (u.protocol !== "https:" || !isKleap)) {
+    console.error(
+      `[kleap-mcp] Refusing to send your API key to ${API_URL}. KLEAP_API_URL must be https and a kleap.co host (set KLEAP_ALLOW_ANY_URL=1 only if you trust it).`,
+    );
+    if (process.env.KLEAP_ALLOW_ANY_URL !== "1") process.exit(1);
+  }
 }
 
-/** Thin REST caller — one place for auth, JSON, timeout, retry, and errors. */
+/** Extract a clean, agent-readable error (code + useful details) from a body. */
+function errorMessage(parsed, status, method, path) {
+  if (parsed && typeof parsed === "object") {
+    const e = parsed.error || {};
+    const code = e.code ? ` [${e.code}]` : "";
+    const msg = e.message || parsed.message;
+    const d = e.details || {};
+    const extra = [];
+    if (d.retry_after != null) extra.push(`retry_after=${d.retry_after}s`);
+    if (d.balance != null) extra.push(`balance=${d.balance}`);
+    if (d.required != null) extra.push(`required=${d.required}`);
+    const tail = extra.length ? ` (${extra.join(", ")})` : "";
+    if (msg) return `Kleap API ${status}${code}: ${msg}${tail}`;
+    return `Kleap API error ${status}${code}${tail}`;
+  }
+  // Non-JSON (e.g. an HTML 404/5xx page) — don't dump markup at the agent.
+  return `Kleap API ${status}: non-JSON response for ${method} ${path} (likely an unknown route)`;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Thin REST caller — auth, timeout, SAFE retry, and clean errors.
+ * Retry policy is method-aware: only GET (idempotent) is retried on a network
+ * error or 5xx. POST is NEVER retried on a network/timeout failure — the request
+ * may have succeeded server-side, and re-firing create/modify/publish would
+ * double-create or double-charge. 429 is never retried (its Retry-After can be
+ * hours); the wait is surfaced to the agent instead.
+ */
 async function api(method, path, body, attempt = 0) {
+  const idempotent = method === "GET";
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   let res;
@@ -67,6 +104,7 @@ async function api(method, path, body, attempt = 0) {
       method,
       headers: {
         Authorization: `Bearer ${API_KEY}`,
+        Accept: "application/json",
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
@@ -74,19 +112,24 @@ async function api(method, path, body, attempt = 0) {
     });
   } catch (err) {
     clearTimeout(timer);
-    // Network error or timeout — retry transient failures with backoff.
-    if (attempt < MAX_RETRIES) {
-      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+    const why =
+      err?.name === "AbortError" ? `timeout after ${TIMEOUT_MS}ms` : err?.message;
+    // Only retry idempotent GETs — never re-fire a POST that may have landed.
+    if (idempotent && attempt < MAX_RETRIES) {
+      await sleep(400 * (attempt + 1));
       return api(method, path, body, attempt + 1);
     }
-    const why = err?.name === "AbortError" ? `timeout after ${TIMEOUT_MS}ms` : err?.message;
     throw new Error(`Network error calling ${method} ${path}: ${why}`);
   }
   clearTimeout(timer);
 
-  // Retry idempotent-ish transient server errors (502/503/504, 429).
-  if ([429, 502, 503, 504].includes(res.status) && attempt < MAX_RETRIES) {
-    await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+  // Retry transient 5xx only for idempotent GETs. Never retry 429.
+  if (
+    idempotent &&
+    [502, 503, 504].includes(res.status) &&
+    attempt < MAX_RETRIES
+  ) {
+    await sleep(400 * (attempt + 1));
     return api(method, path, body, attempt + 1);
   }
 
@@ -171,9 +214,9 @@ const TOOLS = [
         prompt: str("What the website should be."),
         visibility: {
           type: "string",
-          enum: ["public", "personal"],
+          enum: ["public", "personal", "workspace"],
           description:
-            "'public' (discoverable) or 'personal' (private, default).",
+            "'public' (discoverable), 'personal' (private, default), or 'workspace'.",
         },
       },
       ["prompt"],

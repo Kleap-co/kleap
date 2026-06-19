@@ -8,6 +8,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const EXPECTED = [
   "list_apps",
   "get_app",
+  "find_app",
   "list_app_files",
   "create_app",
   "modify_app",
