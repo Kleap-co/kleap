@@ -42,16 +42,54 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-/** Thin REST caller — one place for auth, JSON, and error normalization. */
-async function api(method, path, body) {
-  const res = await fetch(`${API_URL}/api/v1${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${API_KEY}`,
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+const TIMEOUT_MS = Number(process.env.KLEAP_TIMEOUT_MS) || 30000;
+const MAX_RETRIES = 2; // transient network / 5xx only
+
+/** Extract a clean, agent-readable error from a JSON body or non-JSON text. */
+function errorMessage(parsed, status, method, path) {
+  if (parsed && typeof parsed === "object") {
+    const e = parsed.error;
+    const msg = (e && (e.message || e.code)) || parsed.message;
+    if (msg) return `${msg} (HTTP ${status})`;
+    return `Kleap API error (HTTP ${status})`;
+  }
+  // Non-JSON (e.g. an HTML 404/5xx page) — don't dump markup at the agent.
+  return `Kleap API returned a non-JSON ${status} response for ${method} ${path}`;
+}
+
+/** Thin REST caller — one place for auth, JSON, timeout, retry, and errors. */
+async function api(method, path, body, attempt = 0) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(`${API_URL}/api/v1${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    // Network error or timeout — retry transient failures with backoff.
+    if (attempt < MAX_RETRIES) {
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      return api(method, path, body, attempt + 1);
+    }
+    const why = err?.name === "AbortError" ? `timeout after ${TIMEOUT_MS}ms` : err?.message;
+    throw new Error(`Network error calling ${method} ${path}: ${why}`);
+  }
+  clearTimeout(timer);
+
+  // Retry idempotent-ish transient server errors (502/503/504, 429).
+  if ([429, 502, 503, 504].includes(res.status) && attempt < MAX_RETRIES) {
+    await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+    return api(method, path, body, attempt + 1);
+  }
+
   const text = await res.text();
   let parsed;
   try {
@@ -60,9 +98,7 @@ async function api(method, path, body) {
     parsed = text;
   }
   if (!res.ok) {
-    const msg =
-      typeof parsed === "object" ? JSON.stringify(parsed) : String(parsed);
-    throw new Error(`HTTP ${res.status} ${method} ${path} — ${msg.slice(0, 500)}`);
+    throw new Error(errorMessage(parsed, res.status, method, path));
   }
   return parsed;
 }
