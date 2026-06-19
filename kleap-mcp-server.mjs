@@ -42,108 +42,76 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-const TIMEOUT_MS = Number(process.env.KLEAP_TIMEOUT_MS) || 30000;
-const MAX_RETRIES = 2;
-
-// Refuse to send the API key anywhere but kleap.co over HTTPS (or localhost for
-// dev). Prevents KLEAP_API_URL from exfiltrating the Bearer key to any host.
-{
-  let u;
-  try {
-    u = new URL(API_URL);
-  } catch {
-    console.error(`[kleap-mcp] Invalid KLEAP_API_URL: ${API_URL}`);
-    process.exit(1);
-  }
-  const isLocal = u.hostname === "localhost" || u.hostname === "127.0.0.1";
-  const isKleap = u.hostname === "kleap.co" || u.hostname.endsWith(".kleap.co");
-  if (!isLocal && (u.protocol !== "https:" || !isKleap)) {
-    console.error(
-      `[kleap-mcp] Refusing to send your API key to ${API_URL}. KLEAP_API_URL must be https and a kleap.co host (set KLEAP_ALLOW_ANY_URL=1 only if you trust it).`,
-    );
-    if (process.env.KLEAP_ALLOW_ANY_URL !== "1") process.exit(1);
-  }
-}
-
-/** Extract a clean, agent-readable error (code + useful details) from a body. */
-function errorMessage(parsed, status, method, path) {
-  if (parsed && typeof parsed === "object") {
-    const e = parsed.error || {};
-    const code = e.code ? ` [${e.code}]` : "";
-    const msg = e.message || parsed.message;
-    const d = e.details || {};
-    const extra = [];
-    if (d.retry_after != null) extra.push(`retry_after=${d.retry_after}s`);
-    if (d.balance != null) extra.push(`balance=${d.balance}`);
-    if (d.required != null) extra.push(`required=${d.required}`);
-    const tail = extra.length ? ` (${extra.join(", ")})` : "";
-    if (msg) return `Kleap API ${status}${code}: ${msg}${tail}`;
-    return `Kleap API error ${status}${code}${tail}`;
-  }
-  // Non-JSON (e.g. an HTML 404/5xx page) — don't dump markup at the agent.
-  return `Kleap API ${status}: non-JSON response for ${method} ${path} (likely an unknown route)`;
-}
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const safeJson = (t) => { try { return JSON.parse(t); } catch { return null; } };
 
 /**
- * Thin REST caller — auth, timeout, SAFE retry, and clean errors.
- * Retry policy is method-aware: only GET (idempotent) is retried on a network
- * error or 5xx. POST is NEVER retried on a network/timeout failure — the request
- * may have succeeded server-side, and re-firing create/modify/publish would
- * double-create or double-charge. 429 is never retried (its Retry-After can be
- * hours); the wait is surfaced to the agent instead.
+ * Thin REST caller — auth, timeout, bounded retry, JSON/HTML-aware errors.
+ * Retries transient failures (5xx / 429 / network / timeout) with backoff.
+ * Never surfaces raw HTML error pages to the agent; extracts error.code/message.
  */
-async function api(method, path, body, attempt = 0) {
-  const idempotent = method === "GET";
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-  let res;
-  try {
-    res = await fetch(`${API_URL}/api/v1${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${API_KEY}`,
-        Accept: "application/json",
-        ...(body ? { "Content-Type": "application/json" } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: ctrl.signal,
-    });
-  } catch (err) {
-    clearTimeout(timer);
-    const why =
-      err?.name === "AbortError" ? `timeout after ${TIMEOUT_MS}ms` : err?.message;
-    // Only retry idempotent GETs — never re-fire a POST that may have landed.
-    if (idempotent && attempt < MAX_RETRIES) {
-      await sleep(400 * (attempt + 1));
-      return api(method, path, body, attempt + 1);
+async function api(method, path, body, { retries = 2, timeoutMs = 60000 } = {}) {
+  const url = `${API_URL}/api/v1${path}`;
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          Accept: "application/json",
+          ...(body ? { "Content-Type": "application/json" } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+
+      const ctype = res.headers.get("content-type") || "";
+      const text = await res.text();
+      const isJson = ctype.includes("application/json");
+      const parsed = isJson ? safeJson(text) : null;
+
+      if (!res.ok) {
+        if ((res.status >= 500 || res.status === 429) && attempt < retries) {
+          await sleep(400 * 2 ** attempt);
+          continue;
+        }
+        const detail =
+          parsed?.error?.message ||
+          parsed?.message ||
+          (isJson
+            ? JSON.stringify(parsed).slice(0, 300)
+            : `non-JSON ${ctype || "response"} (likely an unhandled route)`);
+        const code = parsed?.error?.code ? ` [${parsed.error.code}]` : "";
+        throw new Error(`Kleap API ${res.status}${code} on ${method} ${path}: ${detail}`);
+      }
+
+      if (!isJson) {
+        throw new Error(`Kleap API returned non-JSON (${ctype}) for ${method} ${path}`);
+      }
+      return parsed;
+    } catch (e) {
+      clearTimeout(t);
+      lastErr =
+        e?.name === "AbortError"
+          ? new Error(`Kleap API timeout after ${timeoutMs}ms on ${method} ${path}`)
+          : e;
+      const retryable =
+        e?.name === "AbortError" ||
+        e?.code === "ECONNRESET" ||
+        e?.code === "ETIMEDOUT" ||
+        /fetch failed|network/i.test(e?.message || "");
+      if (retryable && attempt < retries) {
+        await sleep(400 * 2 ** attempt);
+        continue;
+      }
+      throw lastErr;
     }
-    throw new Error(`Network error calling ${method} ${path}: ${why}`);
   }
-  clearTimeout(timer);
-
-  // Retry transient 5xx only for idempotent GETs. Never retry 429.
-  if (
-    idempotent &&
-    [502, 503, 504].includes(res.status) &&
-    attempt < MAX_RETRIES
-  ) {
-    await sleep(400 * (attempt + 1));
-    return api(method, path, body, attempt + 1);
-  }
-
-  const text = await res.text();
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    parsed = text;
-  }
-  if (!res.ok) {
-    throw new Error(errorMessage(parsed, res.status, method, path));
-  }
-  return parsed;
+  throw lastErr;
 }
 
 const num = (description) => ({ type: "number", description });
@@ -166,20 +134,31 @@ const TOOLS = [
   {
     name: "list_apps",
     description:
-      "List the Kleap apps (websites) owned by the authenticated account. Each app includes its custom_domain(s). Use `q` to filter by name or slug. To find a site by its address (domain/URL), prefer find_app.",
+      "List the Kleap apps (websites) owned by the authenticated account, newest first. Returns a `pagination` object {total, limit, offset, has_more, next_offset}: the server caps `limit` at 100, so when `has_more` is true, page with `next_offset`. To find ONE site by its domain / URL / slug, use find_app instead of paging through everything.",
     inputSchema: obj({
-      q: str("Optional filter on app name or slug (substring match)."),
-      limit: num("Max apps to return (default 50, max 100)."),
+      limit: num("Max apps to return (default 50, server max 100)."),
       offset: num("Pagination offset (default 0)."),
+      q: str("Optional filter on app name or slug (substring match)."),
     }),
-    handler: ({ q, limit, offset } = {}) => {
+    handler: ({ limit, offset, q } = {}) => {
       const params = new URLSearchParams();
-      if (q) params.set("q", String(q));
       if (limit != null) params.set("limit", String(limit));
       if (offset != null) params.set("offset", String(offset));
+      if (q) params.set("q", q);
       const qs = params.toString();
       return api("GET", `/apps${qs ? `?${qs}` : ""}`);
     },
+  },
+  {
+    name: "find_app",
+    description:
+      "Resolve a website the user names by its ADDRESS — a custom domain (\"serrureriesk.ch\"), a kleap.io URL (\"mysite.kleap.io\"), or a bare slug (\"mysite\") — to one of your apps in ONE call. Use this FIRST whenever the user refers to a site by its domain/URL instead of an app id, then pass the returned app_id to get_app / modify_app / publish_app. Do not list every app and scan.",
+    inputSchema: obj(
+      { query: str("A domain, URL, or slug, e.g. 'serrureriesk.ch'.") },
+      ["query"],
+    ),
+    handler: ({ query }) =>
+      api("GET", `/apps/resolve?q=${encodeURIComponent(query)}`),
   },
   {
     name: "get_app",
@@ -187,17 +166,6 @@ const TOOLS = [
       "Get one Kleap app's metadata: status, slug, production_url, published state.",
     inputSchema: obj({ app_id: num("The app id.") }, ["app_id"]),
     handler: ({ app_id }) => api("GET", `/apps/${app_id}`),
-  },
-  {
-    name: "find_app",
-    description:
-      "Resolve a website the user names by its ADDRESS — a custom domain ('mysite.ch'), a kleap.io URL ('mysite.kleap.io'), or a slug — to its app_id. Use this FIRST when the user refers to a site by its address instead of an app_id (e.g. 'edit mysite.ch'), then pass the returned app_id to get_app / modify_app / publish_app.",
-    inputSchema: obj(
-      { query: str("A domain, full URL, or slug (e.g. 'mysite.ch').") },
-      ["query"],
-    ),
-    handler: ({ query }) =>
-      api("GET", `/apps/resolve?q=${encodeURIComponent(query)}`),
   },
   {
     name: "list_app_files",
@@ -212,12 +180,7 @@ const TOOLS = [
     inputSchema: obj(
       {
         prompt: str("What the website should be."),
-        visibility: {
-          type: "string",
-          enum: ["public", "personal", "workspace"],
-          description:
-            "'public' (discoverable), 'personal' (private, default), or 'workspace'.",
-        },
+        visibility: str("'public' (discoverable) or 'personal' (private)."),
       },
       ["prompt"],
     ),
@@ -316,7 +279,7 @@ const TOOLS = [
 ];
 
 const server = new Server(
-  { name: "kleap", version: "1.0.0" },
+  { name: "kleap", version: "0.1.0" },
   { capabilities: { tools: {} } },
 );
 
