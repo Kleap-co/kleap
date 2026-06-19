@@ -190,7 +190,7 @@ const TOOLS = [
   {
     name: "modify_app",
     description:
-      "Ask a Kleap app's AI to change it (edit copy, add a section, fix a bug). Returns a task — poll check_task.",
+      "Ask a Kleap app's AI to change it — describe the OUTCOME you want (edit copy, add a section or page, fix a bug); the AI writes the files (you cannot write files yourself). Returns a task — poll check_task. For MANY similar pages (programmatic SEO), ask in ONE call for a single dynamic Astro route + a data file, NOT one page per call.",
     inputSchema: obj(
       { app_id: num("The app id."), message: str("The change to make.") },
       ["app_id", "message"],
@@ -289,9 +289,28 @@ const TOOLS = [
   },
 ];
 
+const INSTRUCTIONS = `Kleap builds and HOSTS real websites. You drive Kleap by INSTRUCTING ITS AI in plain language — you do NOT write or edit files yourself. There is no file-write tool, by design: Kleap's AI owns the codebase so it can build, fix, type-check and deploy with a verified-live guarantee. (list_app_files is READ-ONLY, for inspecting what exists — you cannot PUT/POST files.)
+
+THE LOOP
+1. Find the site. If the user names it by address ("serrureriesk.ch", "mysite.kleap.io"), call find_app FIRST to get its app_id. Otherwise use list_apps (supports ?q=).
+2. Build or change it:
+   - New site: create_app(prompt).
+   - Change an existing site: modify_app(app_id, message) — describe the OUTCOME you want; Kleap's AI writes every file needed.
+   Both return a task. Poll check_task(task_id) until status="completed" (a full build takes ~5-15 min — it is NOT instant; keep polling). If check_task reports "failed" or stalls, call retry_task(task_id): it resumes from where it stopped — do NOT start the build over.
+3. Publish: publish_app(app_id) (verified-live — only reports live once the page actually serves). connect_domain attaches a domain the user already owns.
+
+Send ONE coherent change per modify_app call. Don't pack many unrelated edits into one message.
+
+MANY SIMILAR PAGES / PROGRAMMATIC SEO — read this before you start:
+Do NOT create hundreds of pages with hundreds of calls — that is the wrong approach and it will stall. Kleap sites are Astro. In ONE modify_app call, ask the AI to add a DYNAMIC ROUTE + a DATA FILE. Example message:
+  "Add a dynamic Astro route at src/pages/[service]/[city].astro driven by a data file src/data/locations.json containing these entries: <paste your full list>. Each page renders the service + city, localized intro, an FAQ and a contact CTA. Also add a /services index page linking to all of them for internal linking."
+That single instruction generates ALL the pages from the data, scales to thousands, deploys once, and avoids per-page stalls. This is THE correct way to do programmatic SEO on Kleap. To add more locations later, modify_app to append entries to the data file.
+
+If a build looks stuck: keep polling check_task (builds are slow, not broken), then retry_task once. rename_app changes only the display name — the live URL never changes. There is no delete tool, by design.`;
+
 const server = new Server(
   { name: "kleap", version: "0.1.0" },
-  { capabilities: { tools: {} } },
+  { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
