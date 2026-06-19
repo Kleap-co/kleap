@@ -252,7 +252,7 @@ const TOOLS = [
   {
     name: "retry_task",
     description:
-      "Resume a failed/stalled create/modify task from where it stopped (partial files preserved). Use when check_task reports 'failed', instead of starting a brand-new create_app. Returns a NEW task_id — poll check_task on that new id. Retry at most once or twice; if it keeps failing or the error is non-transient (out of credits, rejected prompt), stop and tell the user.",
+      "Resume a failed/stalled create/modify task from where it stopped (partial files preserved). Use when check_task reports 'failed', instead of starting a brand-new create_app. Returns a NEW task_id — poll check_task on that NEW id (not the original). Budget: retry TASK_TIMEOUT/STALE_TASK up to TWICE; retry TASK_FAILED only ONCE; then stop and tell the user. NEVER retry a non-transient error (402 INSUFFICIENT_CREDITS, a rejected prompt) — it just fails again.",
     inputSchema: obj({ task_id: str("The failed task id to resume.") }, [
       "task_id",
     ]),
@@ -309,7 +309,7 @@ const TOOLS = [
   {
     name: "connect_domain",
     description:
-      "Connect a domain the user ALREADY OWNS to a live Kleap app (sets up routing + automatic TLS). The app must be live first — a completed create_app/modify_app already counts as published, so you do NOT need to call publish_app first. The user points the domain's A record to Kleap. Does not buy anything.",
+      "Connect a domain the user ALREADY OWNS to a live Kleap app (sets up routing + automatic TLS). The app must be live first — a completed create_app/modify_app already counts as published, so you do NOT need to call publish_app first. The response includes a `dns_config` object with the exact A records the user must set at their registrar (+ propagation time) — relay those to the user. Does not buy anything.",
     inputSchema: obj(
       {
         app_id: num("The app id (must be published)."),
@@ -329,7 +329,7 @@ THE LOOP
 2. Build or change it:
    - New site: create_app(prompt). Its response includes app_id AND a task_id right away.
    - Change an existing site: modify_app(app_id, message) — describe the OUTCOME; the AI writes every file.
-   Both return a task_id. Call check_task(task_id) — it LONG-POLLS by default (holds up to 45s and returns the instant the build finishes), so just call it again while status is queued/processing instead of running a tight poll loop. A full build is ~5-15 min, NOT instant. (For a fully hands-off flow, create_app/modify_app also accept a webhook_url that is POSTed when the task finishes.)
+   Both return a task_id. Call check_task(task_id) — it LONG-POLLS by default (holds up to 50s, default 45, and returns the instant the build finishes), so just call it again while status is queued/processing. A full build is ~5-15 min, NOT instant, so calling check_task ~10-20 times in a row through one build is EXPECTED — that is normal waiting, not a "loop" (the loop warnings below are only about retrying failed tasks). For a fully hands-off flow, create_app/modify_app also accept a webhook_url that is POSTed when the task finishes.
 3. When status="completed", the change is already BUILT AND LIVE at the production URL — create_app and modify_app auto-deploy. (publish_app + get_publish_status only force/verify a re-publish; you normally don't need them after a build.) connect_domain attaches a domain the user already owns (the app must be live first).
 
 ON FAILURE (check_task status="failed"): error.code is one of:
@@ -343,9 +343,11 @@ Send ONE coherent change per modify_app call.
 MANY SIMILAR PAGES / PROGRAMMATIC SEO — read this before you start:
 Do NOT create hundreds of pages with hundreds of calls — it stalls and is the wrong approach. In ONE modify_app call, ask the AI to add a DYNAMIC ROUTE + a DATA FILE. Example:
   "Add a dynamic Astro route at src/pages/[service]/[city].astro driven by a data file src/data/locations.json containing these entries: <paste your full list>. Each page renders the service + city, localized intro, an FAQ and a contact CTA. Also add a /services index page linking to all of them."
-One instruction generates ALL the pages from the data, scales to thousands, deploys once. For a very large list, add entries in batches via follow-up modify_app calls. This is THE correct way to do programmatic SEO on Kleap.
+One instruction generates ALL the pages from the data, scales to thousands, deploys once. Up to a few hundred entries inline in one call is fine; for thousands, add them in batches via follow-up modify_app calls. This is THE correct way to do programmatic SEO on Kleap.
 
-rename_app changes only the display name — the live URL never changes. There is no delete tool, by design.`;
+rename_app changes only the display name — the live URL never changes. There is no delete tool, by design.
+
+KEYS & SCOPES: this server can't manage API keys. Users create and SCOPE keys in Kleap (Settings -> MCP / API access): pick Read-only (inspect sites, no changes), Build, or Full. So if a user wants a read-only agent, tell them to generate a Read-only key there. Buying domains is never included by default.`;
 
 const server = new Server(
   { name: "kleap", version: "0.1.0" },
