@@ -152,7 +152,7 @@ const TOOLS = [
   {
     name: "find_app",
     description:
-      "Resolve a website the user names by its ADDRESS — a custom domain (\"serrureriesk.ch\"), a kleap.io URL (\"mysite.kleap.io\"), or a bare slug (\"mysite\") — to one of your apps in ONE call. Use this FIRST whenever the user refers to a site by its domain/URL instead of an app id, then pass the returned app_id to get_app / modify_app / publish_app. Do not list every app and scan.",
+      "Resolve a website the user names by its ADDRESS — a custom domain (\"serrureriesk.ch\"), a kleap.io URL (\"mysite.kleap.io\"), or a bare slug (\"mysite\") — to one of your apps in ONE call. Use this FIRST whenever the user refers to a site by its domain/URL instead of an app id, then pass the returned app_id to get_app / modify_app / publish_app. Do not list every app and scan. Returns NOT_FOUND if no owned app matches (the site may not be on this account or not connected yet) — then fall back to list_apps.",
     inputSchema: obj(
       { query: str("A domain, URL, or slug, e.g. 'serrureriesk.ch'.") },
       ["query"],
@@ -163,20 +163,21 @@ const TOOLS = [
   {
     name: "get_app",
     description:
-      "Get one Kleap app's metadata: status, slug, production_url, published state.",
+      "Get one Kleap app's metadata: status, slug, production_url, published state. Use this for general app info at any time. To specifically confirm a deploy/publish, use get_publish_status.",
     inputSchema: obj({ app_id: num("The app id.") }, ["app_id"]),
     handler: ({ app_id }) => api("GET", `/apps/${app_id}`),
   },
   {
     name: "list_app_files",
-    description: "List the source files of a Kleap app.",
+    description:
+      "List the source file PATHS of a Kleap app (names only — no contents). READ-ONLY: there is no tool to read a file's contents or to write/edit/delete files. Make all changes via modify_app (Kleap's AI edits the code).",
     inputSchema: obj({ app_id: num("The app id.") }, ["app_id"]),
     handler: ({ app_id }) => api("GET", `/apps/${app_id}/files`),
   },
   {
     name: "create_app",
     description:
-      "Create a new Kleap website from a natural-language prompt. Returns a task — poll check_task until it completes.",
+      "Create a new Kleap website (an Astro site) from a natural-language prompt. Returns app_id + task_id immediately; poll check_task until status='completed' (~5-15 min). The site auto-builds and goes LIVE on completion — no separate publish needed for the first version.",
     inputSchema: obj(
       {
         prompt: str("What the website should be."),
@@ -212,14 +213,14 @@ const TOOLS = [
   {
     name: "check_task",
     description:
-      "Poll an async task (app creation or edit). Returns status + result when done. If status is 'failed' (e.g. a transient generation stall), call retry_task with the same task_id to resume — don't start over.",
+      "Poll an async create/modify task. status is one of: queued, processing, completed, failed. Keep polling through queued/processing (a build is ~5-15 min). On 'completed' the change is built and LIVE (app_id + production_url are available). On 'failed' read error.code/error.message: for a transient stall call retry_task (it returns a NEW task_id — poll that one, not this one); don't start over.",
     inputSchema: obj({ task_id: str("The task id.") }, ["task_id"]),
     handler: ({ task_id }) => api("GET", `/tasks/${task_id}`),
   },
   {
     name: "retry_task",
     description:
-      "Resume a failed or stalled create/modify task from where it stopped (partial files are preserved). Use this when check_task reports 'failed' before starting a brand-new create_app. Returns a fresh task — poll check_task on the new task_id.",
+      "Resume a failed/stalled create/modify task from where it stopped (partial files preserved). Use when check_task reports 'failed', instead of starting a brand-new create_app. Returns a NEW task_id — poll check_task on that new id. Retry at most once or twice; if it keeps failing or the error is non-transient (out of credits, rejected prompt), stop and tell the user.",
     inputSchema: obj({ task_id: str("The failed task id to resume.") }, [
       "task_id",
     ]),
@@ -228,14 +229,14 @@ const TOOLS = [
   {
     name: "publish_app",
     description:
-      "Publish a Kleap app to its live URL with the VERIFIED-LIVE guarantee: it is only reported live once the new version is provably serving (otherwise it reports 'not confirmed live' — never a false positive). Returns a deploy handle — poll get_publish_status.",
+      "Force a (re)publish of an app to its live URL, with the VERIFIED-LIVE guarantee: only reported live once provably serving (else 'not confirmed live' — never a false positive). Usually NOT needed — create_app/modify_app already deploy on completion. Returns a deploy handle; poll get_publish_status. If it reports not-confirmed-live, keep polling get_publish_status — do not loop publish_app.",
     inputSchema: obj({ app_id: num("The app id.") }, ["app_id"]),
     handler: ({ app_id }) => api("POST", `/apps/${app_id}/publish`, {}),
   },
   {
     name: "get_publish_status",
     description:
-      "Check whether an app is actually published and live (production_url + published state).",
+      "Confirm whether an app is actually published and live (production_url + published state) — use this to answer \"is it live yet?\", typically after publish_app. For general app metadata use get_app instead.",
     inputSchema: obj({ app_id: num("The app id.") }, ["app_id"]),
     handler: ({ app_id }) => api("GET", `/apps/${app_id}/publish`),
   },
@@ -276,7 +277,7 @@ const TOOLS = [
   {
     name: "connect_domain",
     description:
-      "Connect a domain the user ALREADY OWNS to a published Kleap app (sets up routing + automatic TLS). The app must be published first; the user points the domain's A record to Kleap. Does not buy anything.",
+      "Connect a domain the user ALREADY OWNS to a live Kleap app (sets up routing + automatic TLS). The app must be live first — a completed create_app/modify_app already counts as published, so you do NOT need to call publish_app first. The user points the domain's A record to Kleap. Does not buy anything.",
     inputSchema: obj(
       {
         app_id: num("The app id (must be published)."),
@@ -289,24 +290,26 @@ const TOOLS = [
   },
 ];
 
-const INSTRUCTIONS = `Kleap builds and HOSTS real websites. You drive Kleap by INSTRUCTING ITS AI in plain language — you do NOT write or edit files yourself. There is no file-write tool, by design: Kleap's AI owns the codebase so it can build, fix, type-check and deploy with a verified-live guarantee. (list_app_files is READ-ONLY, for inspecting what exists — you cannot PUT/POST files.)
+const INSTRUCTIONS = `Kleap builds and HOSTS real websites (Astro). You drive Kleap by INSTRUCTING ITS AI in plain language — you do NOT write or edit files yourself. There is no file-write tool, by design: Kleap's AI owns the codebase so it can build, fix, type-check and deploy with a verified-live guarantee. (list_app_files is READ-ONLY — it lists file names only; there is no read-content or write-file tool.)
 
 THE LOOP
-1. Find the site. If the user names it by address ("serrureriesk.ch", "mysite.kleap.io"), call find_app FIRST to get its app_id. Otherwise use list_apps (supports ?q=).
+1. Find the site. If the user names it by address ("serrureriesk.ch", "mysite.kleap.io"), call find_app FIRST. If find_app returns NOT_FOUND, the site isn't on this account or isn't connected yet — fall back to list_apps (supports ?q=) or ask the user. Otherwise use list_apps.
 2. Build or change it:
-   - New site: create_app(prompt).
-   - Change an existing site: modify_app(app_id, message) — describe the OUTCOME you want; Kleap's AI writes every file needed.
-   Both return a task. Poll check_task(task_id) until status="completed" (a full build takes ~5-15 min — it is NOT instant; keep polling). If check_task reports "failed" or stalls, call retry_task(task_id): it resumes from where it stopped — do NOT start the build over.
-3. Publish: publish_app(app_id) (verified-live — only reports live once the page actually serves). connect_domain attaches a domain the user already owns.
+   - New site: create_app(prompt). Its response includes app_id AND a task_id right away.
+   - Change an existing site: modify_app(app_id, message) — describe the OUTCOME; the AI writes every file.
+   Both return a task_id. Poll check_task(task_id). status is one of: queued, processing, completed, failed. Keep polling through queued/processing — a full build is ~5-15 min, NOT instant.
+3. When status="completed", the change is already BUILT AND LIVE at the production URL — create_app and modify_app auto-deploy. (publish_app + get_publish_status only force/verify a re-publish; you normally don't need them after a build.) connect_domain attaches a domain the user already owns (the app must be live first).
 
-Send ONE coherent change per modify_app call. Don't pack many unrelated edits into one message.
+ON FAILURE: if check_task returns status="failed", read error.code / error.message. For a TRANSIENT stall (e.g. error.code TASK_TIMEOUT, or a dropped stream), call retry_task(task_id) — it returns a NEW task_id; poll check_task on THAT new id (not the original). Retry up to twice. If it still fails, or the error is NON-transient (e.g. out of credits — check get_credits — or a rejected prompt), STOP and tell the user. Do NOT loop.
+
+Send ONE coherent change per modify_app call.
 
 MANY SIMILAR PAGES / PROGRAMMATIC SEO — read this before you start:
-Do NOT create hundreds of pages with hundreds of calls — that is the wrong approach and it will stall. Kleap sites are Astro. In ONE modify_app call, ask the AI to add a DYNAMIC ROUTE + a DATA FILE. Example message:
-  "Add a dynamic Astro route at src/pages/[service]/[city].astro driven by a data file src/data/locations.json containing these entries: <paste your full list>. Each page renders the service + city, localized intro, an FAQ and a contact CTA. Also add a /services index page linking to all of them for internal linking."
-That single instruction generates ALL the pages from the data, scales to thousands, deploys once, and avoids per-page stalls. This is THE correct way to do programmatic SEO on Kleap. To add more locations later, modify_app to append entries to the data file.
+Do NOT create hundreds of pages with hundreds of calls — it stalls and is the wrong approach. In ONE modify_app call, ask the AI to add a DYNAMIC ROUTE + a DATA FILE. Example:
+  "Add a dynamic Astro route at src/pages/[service]/[city].astro driven by a data file src/data/locations.json containing these entries: <paste your full list>. Each page renders the service + city, localized intro, an FAQ and a contact CTA. Also add a /services index page linking to all of them."
+One instruction generates ALL the pages from the data, scales to thousands, deploys once. For a very large list, add entries in batches via follow-up modify_app calls. This is THE correct way to do programmatic SEO on Kleap.
 
-If a build looks stuck: keep polling check_task (builds are slow, not broken), then retry_task once. rename_app changes only the display name — the live URL never changes. There is no delete tool, by design.`;
+rename_app changes only the display name — the live URL never changes. There is no delete tool, by design.`;
 
 const server = new Server(
   { name: "kleap", version: "0.1.0" },
