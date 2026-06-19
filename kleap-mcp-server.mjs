@@ -87,16 +87,18 @@ const TOOLS = [
   {
     name: "list_apps",
     description:
-      "List the Kleap apps (websites) owned by the authenticated account.",
+      "List the Kleap apps (websites) owned by the authenticated account. Each app includes its custom_domain(s). Use `q` to filter by name or slug. To find a site by its address (domain/URL), prefer find_app.",
     inputSchema: obj({
-      limit: num("Max apps to return (default 20)."),
+      q: str("Optional filter on app name or slug (substring match)."),
+      limit: num("Max apps to return (default 50, max 100)."),
       offset: num("Pagination offset (default 0)."),
     }),
-    handler: ({ limit, offset } = {}) => {
-      const q = new URLSearchParams();
-      if (limit != null) q.set("limit", String(limit));
-      if (offset != null) q.set("offset", String(offset));
-      const qs = q.toString();
+    handler: ({ q, limit, offset } = {}) => {
+      const params = new URLSearchParams();
+      if (q) params.set("q", String(q));
+      if (limit != null) params.set("limit", String(limit));
+      if (offset != null) params.set("offset", String(offset));
+      const qs = params.toString();
       return api("GET", `/apps${qs ? `?${qs}` : ""}`);
     },
   },
@@ -106,6 +108,17 @@ const TOOLS = [
       "Get one Kleap app's metadata: status, slug, production_url, published state.",
     inputSchema: obj({ app_id: num("The app id.") }, ["app_id"]),
     handler: ({ app_id }) => api("GET", `/apps/${app_id}`),
+  },
+  {
+    name: "find_app",
+    description:
+      "Resolve a website the user names by its ADDRESS — a custom domain ('mysite.ch'), a kleap.io URL ('mysite.kleap.io'), or a slug — to its app_id. Use this FIRST when the user refers to a site by its address instead of an app_id (e.g. 'edit mysite.ch'), then pass the returned app_id to get_app / modify_app / publish_app.",
+    inputSchema: obj(
+      { query: str("A domain, full URL, or slug (e.g. 'mysite.ch').") },
+      ["query"],
+    ),
+    handler: ({ query }) =>
+      api("GET", `/apps/resolve?q=${encodeURIComponent(query)}`),
   },
   {
     name: "list_app_files",
@@ -120,7 +133,12 @@ const TOOLS = [
     inputSchema: obj(
       {
         prompt: str("What the website should be."),
-        visibility: str("'public' (discoverable) or 'personal' (private)."),
+        visibility: {
+          type: "string",
+          enum: ["public", "personal"],
+          description:
+            "'public' (discoverable) or 'personal' (private, default).",
+        },
       },
       ["prompt"],
     ),
