@@ -25,7 +25,7 @@ plainly — never invent a working URL.
 ## Core flow — create a site
 
 1. `create_app({ prompt })` — give a detailed description. Returns `{ app_id, task_id }`.
-2. Poll `check_task({ task_id })` every ~10–15s until `status` is `completed` or `failed`. Building takes ~60–90s.
+2. Poll `check_task({ task_id })` every ~10–15s until `status` is `completed` or `failed`. Building usually takes a couple of minutes (up to ~15 for complex sites) — check_task long-polls so you don't babysit it.
 3. If `failed` (transient stalls happen): call `retry_task({ task_id })` with the
    SAME task_id — it resumes from partial state and preserves files already
    written. Do not start a brand-new `create_app`. Then poll `check_task` on the
