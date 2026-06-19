@@ -59,13 +59,59 @@ MCP / API access → Generate MCP key** (`kleap_live_sk_...`).
 </details>
 
 <details>
+<summary><b>Claude Code</b> — one command</summary>
+
+```bash
+claude mcp add kleap -e KLEAP_API_KEY=kleap_live_sk_... -- npx -y github:Kleap-co/kleap
+```
+</details>
+
+<details>
+<summary><b>Cline / Roo (VS Code)</b> — <code>cline_mcp_settings.json</code></summary>
+
+```json
+{
+  "mcpServers": {
+    "kleap": {
+      "command": "npx",
+      "args": ["-y", "github:Kleap-co/kleap"],
+      "env": { "KLEAP_API_KEY": "kleap_live_sk_..." }
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>Windsurf</b> — <code>~/.codeium/windsurf/mcp_config.json</code></summary>
+
+```json
+{
+  "mcpServers": {
+    "kleap": {
+      "command": "npx",
+      "args": ["-y", "github:Kleap-co/kleap"],
+      "env": { "KLEAP_API_KEY": "kleap_live_sk_..." }
+    }
+  }
+}
+```
+</details>
+
+<details>
 <summary><b>ChatGPT &amp; hosted agents</b> — no local process</summary>
 
 Add the hosted connector at **`https://kleap.co/api/mcp`** and authorize with
-OAuth (or paste your `kleap_live_sk_` key).
+OAuth (or paste your `kleap_live_sk_` key). Same tools, no install.
 </details>
 
-> Once published to npm, the install shortens to `"args": ["-y", "kleap"]`.
+> Every stdio config is identical — `npx -y github:Kleap-co/kleap` + a
+> `KLEAP_API_KEY` env var — so any MCP client works. Once published to npm the
+> install shortens to `"args": ["-y", "kleap"]`.
+
+**Least-privilege keys:** when you generate a key, pick a scope — **Read-only**
+(inspect sites, no changes), **Build**, or **Full**. Buying domains is never
+included by default. Give a read-only agent a read-only key.
 
 **3. Restart the client and just ask:**
 
@@ -79,25 +125,42 @@ Works with **any MCP-compatible agent**: Claude · ChatGPT · Cursor · Claude C
 
 ## Tools
 
-**Build** — `create_app` · `modify_app` · `check_task` · `retry_task`
+**Find & build** — `find_app` · `create_app` · `modify_app` · `rename_app` · `check_task` · `retry_task`
 **Publish & domains** — `publish_app` · `get_publish_status` · `search_domains` · `check_domain` · `connect_domain`
 **Account** — `list_apps` · `get_app` · `list_app_files` · `get_credits`
 
 | Tool | What it does |
 |------|--------------|
-| `create_app` | Create a site from a prompt → returns a task |
+| `find_app` | Resolve a domain / URL / slug → app_id in one call |
+| `create_app` | Create an Astro site from a prompt → returns a task (auto-deploys live) |
 | `modify_app` | Ask the app's AI to change it → returns a task |
-| `check_task` | Poll a create/modify task to completion |
-| `retry_task` | Resume a failed/stalled build from partial state |
+| `rename_app` | Rename the display name (URL stays the same) |
+| `check_task` | Long-poll a create/modify task to completion (`wait` up to 50s) |
+| `retry_task` | Resume a failed/stalled build from partial state (new task_id) |
 | `publish_app` | Publish with verified-live (live-or-rollback, never a false "online") |
 | `get_publish_status` | Confirm a site is actually published + live |
 | `search_domains` | Find available domains (purchase stays user-confirmed in Kleap) |
-| `connect_domain` | Connect a domain you already own to a published app |
+| `connect_domain` | Connect a domain you already own to a live app |
 | `check_domain` | A domain's connection / DNS status |
-| `list_apps` / `get_app` / `list_app_files` | Your apps, an app's details, its files |
+| `list_apps` / `get_app` / `list_app_files` | Your apps, an app's details, its files (read-only) |
 | `get_credits` | Remaining credit balance + plan |
 
 App arguments are snake_case: `app_id`, `task_id`, `prompt`, `message`, `visibility`.
+
+## Recipes
+
+**You instruct the AI — you never write files.** There is no file-write tool by
+design; describe the outcome and Kleap's AI writes, builds, and deploys it.
+
+- **Edit a site named by its address** — `find_app("mysite.ch")` → `modify_app(app_id, "…")` → `check_task(task_id)`.
+- **Hundreds of pages (programmatic SEO)** — do **not** loop `create_app`. In one
+  `modify_app`, ask for a *dynamic route + a data file*:
+  > *"Add a dynamic Astro route `src/pages/[service]/[city].astro` driven by `src/data/locations.json` with these 165 entries: … Each page renders the service, city, an FAQ and a CTA; add a `/services` index linking them all."*
+  One call generates every page and scales to thousands.
+- **Don't babysit a 5-15 min build** — `check_task` long-polls (default `wait=45`),
+  or pass a `webhook_url` to `create_app` / `modify_app` for a fully hands-off flow.
+- **A build failed** — `TASK_TIMEOUT`/`STALE_TASK` = transient, call `retry_task`
+  (poll the **new** task_id it returns). `TASK_FAILED` = read the message, retry once.
 
 ## The verified-live guarantee
 
