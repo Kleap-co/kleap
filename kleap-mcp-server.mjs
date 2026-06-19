@@ -182,22 +182,38 @@ const TOOLS = [
       {
         prompt: str("What the website should be."),
         visibility: str("'public' (discoverable) or 'personal' (private)."),
+        webhook_url: str(
+          "Optional HTTPS URL that Kleap POSTs when the build finishes — use it for a hands-off flow instead of polling check_task.",
+        ),
       },
       ["prompt"],
     ),
-    handler: ({ prompt, visibility }) =>
-      api("POST", "/apps", { prompt, visibility: visibility || "personal" }),
+    handler: ({ prompt, visibility, webhook_url }) =>
+      api("POST", "/apps", {
+        prompt,
+        visibility: visibility || "personal",
+        ...(webhook_url ? { webhook_url } : {}),
+      }),
   },
   {
     name: "modify_app",
     description:
       "Ask a Kleap app's AI to change it — describe the OUTCOME you want (edit copy, add a section or page, fix a bug); the AI writes the files (you cannot write files yourself). Returns a task — poll check_task. For MANY similar pages (programmatic SEO), ask in ONE call for a single dynamic Astro route + a data file, NOT one page per call.",
     inputSchema: obj(
-      { app_id: num("The app id."), message: str("The change to make.") },
+      {
+        app_id: num("The app id."),
+        message: str("The change to make."),
+        webhook_url: str(
+          "Optional HTTPS URL that Kleap POSTs when the edit finishes — for a hands-off flow instead of polling check_task.",
+        ),
+      },
       ["app_id", "message"],
     ),
-    handler: ({ app_id, message }) =>
-      api("POST", `/apps/${app_id}/messages`, { message }),
+    handler: ({ app_id, message, webhook_url }) =>
+      api("POST", `/apps/${app_id}/messages`, {
+        message,
+        ...(webhook_url ? { webhook_url } : {}),
+      }),
   },
   {
     name: "rename_app",
@@ -213,9 +229,25 @@ const TOOLS = [
   {
     name: "check_task",
     description:
-      "Poll an async create/modify task. status is one of: queued, processing, completed, failed. Keep polling through queued/processing (a build is ~5-15 min). On 'completed' the change is built and LIVE (app_id + production_url are available). On 'failed' read error.code/error.message: for a transient stall call retry_task (it returns a NEW task_id — poll that one, not this one); don't start over.",
-    inputSchema: obj({ task_id: str("The task id.") }, ["task_id"]),
-    handler: ({ task_id }) => api("GET", `/tasks/${task_id}`),
+      "Check an async create/modify task. By default it LONG-POLLS: the call holds for up to 'wait' seconds and returns the moment the task finishes — so you wait efficiently instead of hammering this every few seconds through a 5-15 min build. Just call it again if status is still queued/processing. status is one of: queued, processing, completed, failed. On 'completed' the change is built and LIVE (app_id + production_url available). On 'failed', error.code is TASK_TIMEOUT or STALE_TASK (the build STALLED — transient — call retry_task, which returns a NEW task_id to poll) or TASK_FAILED (generation failed — read error.message; retry_task once, and if it repeats, stop and tell the user). (Out-of-credits is not a task failure — create_app/modify_app reject up front with 402 INSUFFICIENT_CREDITS.)",
+    inputSchema: obj(
+      {
+        task_id: str("The task id."),
+        wait: num(
+          "Seconds to long-poll, 0-50 (default 45). The call returns early the instant the task reaches completed/failed. Use 0 for an immediate snapshot.",
+        ),
+      },
+      ["task_id"],
+    ),
+    handler: ({ task_id, wait }) => {
+      const w = wait == null ? 45 : Math.min(Math.max(Number(wait) || 0, 0), 50);
+      return api(
+        "GET",
+        `/tasks/${encodeURIComponent(task_id)}?wait=${w}`,
+        undefined,
+        { timeoutMs: (w + 15) * 1000 },
+      );
+    },
   },
   {
     name: "retry_task",
@@ -297,10 +329,14 @@ THE LOOP
 2. Build or change it:
    - New site: create_app(prompt). Its response includes app_id AND a task_id right away.
    - Change an existing site: modify_app(app_id, message) — describe the OUTCOME; the AI writes every file.
-   Both return a task_id. Poll check_task(task_id). status is one of: queued, processing, completed, failed. Keep polling through queued/processing — a full build is ~5-15 min, NOT instant.
+   Both return a task_id. Call check_task(task_id) — it LONG-POLLS by default (holds up to 45s and returns the instant the build finishes), so just call it again while status is queued/processing instead of running a tight poll loop. A full build is ~5-15 min, NOT instant. (For a fully hands-off flow, create_app/modify_app also accept a webhook_url that is POSTed when the task finishes.)
 3. When status="completed", the change is already BUILT AND LIVE at the production URL — create_app and modify_app auto-deploy. (publish_app + get_publish_status only force/verify a re-publish; you normally don't need them after a build.) connect_domain attaches a domain the user already owns (the app must be live first).
 
-ON FAILURE: if check_task returns status="failed", read error.code / error.message. For a TRANSIENT stall (e.g. error.code TASK_TIMEOUT, or a dropped stream), call retry_task(task_id) — it returns a NEW task_id; poll check_task on THAT new id (not the original). Retry up to twice. If it still fails, or the error is NON-transient (e.g. out of credits — check get_credits — or a rejected prompt), STOP and tell the user. Do NOT loop.
+ON FAILURE (check_task status="failed"): error.code is one of:
+  - TASK_TIMEOUT / STALE_TASK → the build STALLED (transient). Call retry_task(task_id); it returns a NEW task_id — poll check_task on THAT id. Retry up to twice.
+  - TASK_FAILED → generation failed. Read error.message; retry_task once. If it repeats, STOP and tell the user. Do NOT loop.
+
+ERRORS BEFORE A TASK STARTS (HTTP errors thrown by create_app/modify_app, with an error.code): 402 INSUFFICIENT_CREDITS (check get_credits and ask the user to top up — do NOT retry), 400 VALIDATION_ERROR (fix the input), 401 UNAUTHORIZED (bad/expired key), 429 RATE_LIMITED (back off, honor Retry-After), 404 NOT_FOUND (wrong app_id — use find_app).
 
 Send ONE coherent change per modify_app call.
 
