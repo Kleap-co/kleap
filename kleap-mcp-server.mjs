@@ -347,7 +347,7 @@ One instruction generates ALL the pages from the data, scales to thousands, depl
 
 rename_app changes only the display name — the live URL never changes. There is no delete tool, by design.
 
-KEYS & SCOPES: this server can't manage API keys. Users create and SCOPE keys in Kleap (Settings -> MCP / API access): pick Read-only (inspect sites, no changes), Build, or Full. So if a user wants a read-only agent, tell them to generate a Read-only key there. Buying domains is never included by default.`;
+KEYS & SCOPES: this server can't manage API keys. Users create and SCOPE keys in Kleap (Settings -> MCP / API access): pick Read-only, Build, or Full. Read-only allows only the read tools (list_apps, find_app, get_app, list_app_files, get_publish_status, check_domain, search_domains, get_credits) and a write tool with a read-only key returns 401/403; Build/Full additionally allow create_app, modify_app, rename_app, publish_app, connect_domain. So for a read-only agent, tell the user to generate a Read-only key there. Buying domains is never included by default.`;
 
 const server = new Server(
   { name: "kleap", version: "0.1.0" },
