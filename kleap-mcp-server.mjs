@@ -199,6 +199,17 @@ const TOOLS = [
       api("POST", `/apps/${app_id}/messages`, { message }),
   },
   {
+    name: "rename_app",
+    description:
+      "Rename an app's display name. This does NOT change its URL — the live address ({slug}.kleap.io) and any links to it stay intact. (There is no delete tool, by design.)",
+    inputSchema: obj(
+      { app_id: num("The app id."), name: str("The new display name.") },
+      ["app_id", "name"],
+    ),
+    handler: ({ app_id, name }) =>
+      api("PATCH", `/apps/${app_id}`, { name }),
+  },
+  {
     name: "check_task",
     description:
       "Poll an async task (app creation or edit). Returns status + result when done. If status is 'failed' (e.g. a transient generation stall), call retry_task with the same task_id to resume — don't start over.",
