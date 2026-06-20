@@ -13,7 +13,7 @@ An alternative to Lovable / v0 / Bolt — except it's driven by **your** agent, 
 every publish comes with the **verified-live guarantee**: a site is only ever
 reported online once it is *provably serving* — never a hallucinated dead link.
 
-![A real, unedited run: an agent writes a page with write_files, publishes, and it is live and serving in seconds.](./assets/demo.gif)
+![A real, unedited run: an agent writes a page with write_files, publishes, and it is live and serving in seconds.](https://raw.githubusercontent.com/Kleap-co/kleap/main/assets/demo.gif)
 
 > *Above: a real run — your agent writes the code with `write_files`, `publish_app` builds & deploys it, and the page is live in seconds. Or just ask Kleap's AI in plain English.*
 
