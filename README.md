@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Kleap-co/kleap/actions/workflows/ci.yml/badge.svg)](https://github.com/Kleap-co/kleap/actions/workflows/ci.yml)
 [![MCP](https://img.shields.io/badge/MCP-server-2563eb)](https://modelcontextprotocol.io)
-[![15 tools](https://img.shields.io/badge/tools-15-ff0055)](#tools)
+[![16 tools](https://img.shields.io/badge/tools-16-ff0055)](#tools)
 [![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 > **Your agent builds. Kleap ships it live.**
