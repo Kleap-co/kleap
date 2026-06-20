@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Kleap-co/kleap/actions/workflows/ci.yml/badge.svg)](https://github.com/Kleap-co/kleap/actions/workflows/ci.yml)
 [![MCP](https://img.shields.io/badge/MCP-server-2563eb)](https://modelcontextprotocol.io)
-[![16 tools](https://img.shields.io/badge/tools-16-ff0055)](#tools)
+[![17 tools](https://img.shields.io/badge/tools-17-ff0055)](#tools)
 [![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 > **Your agent builds. Kleap ships it live.**
@@ -39,7 +39,7 @@ https://kleap.co/api/mcp
 - **ChatGPT** — Settings → Connectors → add the URL → authorize with OAuth.
 - **Cursor** — Settings → **MCP** → Add server → paste the URL → authorize.
 
-That's it — same 16 tools, no API key. Skip straight to step 3.
+That's it — same 17 tools, no API key. Skip straight to step 3.
 
 ---
 
@@ -150,7 +150,7 @@ Works with **any MCP-compatible agent**: Claude · ChatGPT · Cursor · Claude C
 
 ## Tools
 
-**Find & build** — `find_app` · `create_app` · `modify_app` · `write_files` · `rename_app` · `check_task` · `retry_task`
+**Find & build** — `find_app` · `create_app` · `modify_app` · `read_files` · `write_files` · `rename_app` · `check_task` · `retry_task`
 **Publish & domains** — `publish_app` · `get_publish_status` · `search_domains` · `check_domain` · `connect_domain`
 **Account** — `list_apps` · `get_app` · `list_app_files` · `get_credits`
 
@@ -159,6 +159,7 @@ Works with **any MCP-compatible agent**: Claude · ChatGPT · Cursor · Claude C
 | `find_app` | Resolve a domain / URL / slug → app_id in one call |
 | `create_app` | Create an Astro site from a prompt → returns a task (auto-deploys live) |
 | `modify_app` | Ask the app's AI to change it → returns a task |
+| `read_files` | Read the **current contents** of files so you can edit them safely (not blind) |
 | `write_files` | Write exact files directly (**your** code, deterministic) → then `publish_app` |
 | `rename_app` | Rename the display name (URL stays the same) |
 | `check_task` | Long-poll a create/modify task to completion (`wait` up to 50s) |
@@ -181,7 +182,8 @@ App arguments are snake_case: `app_id`, `task_id`, `prompt`, `message`, `visibil
 
 Either way Kleap hosts it (build, deploy, SSL, DB, auth, domains, verified-live).
 
-- **Edit a site named by its address** — `find_app("mysite.ch")` → `modify_app(app_id, "…")` → `check_task(task_id, wait=45)`.
+- **Edit existing files SAFELY (don't rewrite blind)** — `list_app_files(app_id)` → `read_files(app_id, ["src/components/Header.astro"])` → edit only what must change with your own model → `write_files(app_id, [{ path, content }])` → `publish_app(app_id)`. This read→edit→write loop is the reliable way to fix headers/footers, wrong phone numbers, broken links or dead forms without breaking the rest of the site.
+- **Edit a site named by its address** — `find_app("mysite.ch")` → `read_files(...)` → `write_files(...)` → `publish_app(...)`, or `modify_app(app_id, "…")` → `check_task(task_id, wait=45)`.
 - **Many pages (programmatic SEO) — BEST:** generate a dynamic route + a data file with your own model and push them in one `write_files`, then `publish_app`:
   > `write_files(app_id, [{ path: "src/pages/[service]/[city].astro", content: … }, { path: "src/data/locations.json", content: … }])` → `publish_app(app_id)`
   Deterministic, scales to thousands, no stall, no credits. (Or ask Kleap's AI to do the same in one `modify_app` — never loop one call per page.)

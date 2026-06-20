@@ -170,9 +170,33 @@ const TOOLS = [
   {
     name: "list_app_files",
     description:
-      "List the source file PATHS of a Kleap app (names only — no contents). Use it to inspect the project structure before writing. To CHANGE files you have two options: write_files (you push exact file contents — deterministic, your model writes the code) or modify_app (you describe the change and Kleap's AI writes it).",
+      "List the source file PATHS of a Kleap app (names only — no contents). Use it to inspect the project structure, then read_files to get the actual contents before editing. To CHANGE files: read_files → edit with your model → write_files → publish_app (deterministic), or modify_app (you describe the change and Kleap's AI writes it).",
     inputSchema: obj({ app_id: num("The app id.") }, ["app_id"]),
     handler: ({ app_id }) => api("GET", `/apps/${app_id}/files`),
+  },
+  {
+    name: "read_files",
+    description:
+      "Read the FULL CONTENTS of existing files so you can edit them SAFELY instead of rewriting blind (which risks breaking shared components/homepages). This closes the loop: list_app_files → read_files → edit the exact text with YOUR model → write_files → publish_app. Use it to fix headers/footers, wrong phone numbers, broken links, dead forms, etc. Pass one or many paths. Allowed with a Read-only key. Returns { files: [{ path, content, type, bytes }], missing: [paths not found] }.",
+    inputSchema: obj(
+      {
+        app_id: num("The app id."),
+        paths: {
+          type: "array",
+          description:
+            "Project-relative file paths to read, from list_app_files (e.g. ['src/components/Header.astro','src/components/Footer.astro']).",
+          items: { type: "string" },
+        },
+      },
+      ["app_id", "paths"],
+    ),
+    handler: ({ app_id, paths }) =>
+      api(
+        "GET",
+        `/apps/${encodeURIComponent(app_id)}/files?paths=${encodeURIComponent(
+          (Array.isArray(paths) ? paths : [paths]).join(","),
+        )}`,
+      ),
   },
   {
     name: "write_files",
@@ -353,6 +377,8 @@ const INSTRUCTIONS = `Kleap builds and HOSTS real websites (Astro). You have TWO
   • modify_app (Kleap's AI does it): describe the OUTCOME in plain language and Kleap's AI writes the files. Best when you'd rather it figure out the change than write the code yourself.
 Either way KLEAP HOSTS the result — build, deploy, SSL, database, auth, forms, custom domains, and the verified-live guarantee. Use list_app_files first to see the project structure (paths only; these are Astro sites: src/pages/*.astro, src/data/*.json, src/components/*.astro, public/*).
 
+TO EDIT AN EXISTING SITE SAFELY — never rewrite a file blind. Do: list_app_files → read_files(app_id, [paths]) to get the CURRENT contents → edit only what must change with your model → write_files the edited files → publish_app. This is the reliable way to fix shared components, headers/footers, wrong phone numbers, broken links, dead forms, etc. (read_files works with a Read-only key, so you can always inspect before changing.) Prefer this read→edit→write loop over modify_app when you need a precise, verifiable change — modify_app hands the edit to Kleap's AI and may not apply exactly what you intend.
+
 THE LOOP
 1. Find the site. If the user names it by address ("serrureriesk.ch", "mysite.kleap.io"), call find_app FIRST. If find_app returns NOT_FOUND, the site isn't on this account or isn't connected yet — fall back to list_apps (supports ?q=) or ask the user. Otherwise use list_apps.
 2. Build or change it — two paths:
@@ -374,10 +400,10 @@ ALTERNATIVE (let Kleap's AI do it): ONE modify_app call asking for "a dynamic ro
 
 rename_app changes only the display name — the live URL never changes. There is no delete tool, by design.
 
-KEYS & SCOPES: this server can't manage API keys. Users create and SCOPE keys in Kleap (Settings -> MCP / API access): pick Read-only, Build, or Full. Read-only allows only the read tools (list_apps, find_app, get_app, list_app_files, get_publish_status, check_domain, search_domains, get_credits) and a write tool with a read-only key returns 401/403; Build/Full additionally allow create_app, modify_app, write_files, rename_app, publish_app, connect_domain. So for a read-only agent, tell the user to generate a Read-only key there. Buying domains is never included by default.`;
+KEYS & SCOPES: this server can't manage API keys. Users create and SCOPE keys in Kleap (Settings -> MCP / API access): pick Read-only, Build, or Full. Read-only allows only the read tools (list_apps, find_app, get_app, list_app_files, read_files, get_publish_status, check_domain, search_domains, get_credits) and a write tool with a read-only key returns 401/403; Build/Full additionally allow create_app, modify_app, write_files, rename_app, publish_app, connect_domain. So for a read-only agent, tell the user to generate a Read-only key there. Buying domains is never included by default.`;
 
 const server = new Server(
-  { name: "kleap", version: "1.0.7" },
+  { name: "kleap", version: "1.0.10" },
   { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
 );
 
