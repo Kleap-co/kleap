@@ -170,9 +170,35 @@ const TOOLS = [
   {
     name: "list_app_files",
     description:
-      "List the source file PATHS of a Kleap app (names only — no contents). READ-ONLY: there is no tool to read a file's contents or to write/edit/delete files. Make all changes via modify_app (Kleap's AI edits the code).",
+      "List the source file PATHS of a Kleap app (names only — no contents). Use it to inspect the project structure before writing. To CHANGE files you have two options: write_files (you push exact file contents — deterministic, your model writes the code) or modify_app (you describe the change and Kleap's AI writes it).",
     inputSchema: obj({ app_id: num("The app id.") }, ["app_id"]),
     handler: ({ app_id }) => api("GET", `/apps/${app_id}/files`),
+  },
+  {
+    name: "write_files",
+    description:
+      "Write source files DIRECTLY — YOUR agent's model generates the code, Kleap just stores, builds and deploys it. No Kleap-AI generation step, so it is DETERMINISTIC, uses NO Kleap credits, and never stalls (unlike asking an AI to build). Use this to scaffold exact files/pages — e.g. programmatic-SEO routes — instead of relying on modify_app. Paths are project-relative; these are Astro sites (src/pages/*.astro, src/data/*.json, src/components/*.astro, public/*). Overwrites by path. AFTER writing, call publish_app to build & go live. (Prefer modify_app when you'd rather Kleap's AI figure out the change.)",
+    inputSchema: obj(
+      {
+        app_id: num("The app id."),
+        files: {
+          type: "array",
+          description:
+            "Files to write/overwrite. Each is { path, content }. path is project-relative (e.g. 'src/pages/services/[city].astro'); content is the full file text.",
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              content: { type: "string" },
+            },
+            required: ["path", "content"],
+          },
+        },
+      },
+      ["app_id", "files"],
+    ),
+    handler: ({ app_id, files }) =>
+      api("PUT", `/apps/${encodeURIComponent(app_id)}/files`, { files }),
   },
   {
     name: "create_app",
@@ -261,7 +287,7 @@ const TOOLS = [
   {
     name: "publish_app",
     description:
-      "Force a (re)publish of an app to its live URL, with the VERIFIED-LIVE guarantee: only reported live once provably serving (else 'not confirmed live' — never a false positive). Usually NOT needed — create_app/modify_app already deploy on completion. Returns a deploy handle; poll get_publish_status. If it reports not-confirmed-live, keep polling get_publish_status — do not loop publish_app.",
+      "Build & publish an app to its live URL, with the VERIFIED-LIVE guarantee: only reported live once provably serving (else 'not confirmed live' — never a false positive). REQUIRED after write_files (that stores files but does not deploy). NOT needed after create_app/modify_app (those auto-deploy on completion). Returns a deploy handle; poll get_publish_status. If it reports not-confirmed-live, keep polling get_publish_status — do not loop publish_app.",
     inputSchema: obj({ app_id: num("The app id.") }, ["app_id"]),
     handler: ({ app_id }) => api("POST", `/apps/${app_id}/publish`, {}),
   },
@@ -322,14 +348,16 @@ const TOOLS = [
   },
 ];
 
-const INSTRUCTIONS = `Kleap builds and HOSTS real websites (Astro). You drive Kleap by INSTRUCTING ITS AI in plain language — you do NOT write or edit files yourself. There is no file-write tool, by design: Kleap's AI owns the codebase so it can build, fix, type-check and deploy with a verified-live guarantee. (list_app_files is READ-ONLY — it lists file names only; there is no read-content or write-file tool.)
+const INSTRUCTIONS = `Kleap builds and HOSTS real websites (Astro). You have TWO ways to put code on a site — pick per task:
+  • write_files (DETERMINISTIC, recommended when you know the code): YOUR model writes the exact file contents; push them with write_files(app_id, files); Kleap stores, builds and deploys them AS-IS. No Kleap-AI generation step → no Kleap credits, and it never stalls. Best for precise scaffolding: pages, components, data files, programmatic SEO. Then call publish_app to go live.
+  • modify_app (Kleap's AI does it): describe the OUTCOME in plain language and Kleap's AI writes the files. Best when you'd rather it figure out the change than write the code yourself.
+Either way KLEAP HOSTS the result — build, deploy, SSL, database, auth, forms, custom domains, and the verified-live guarantee. Use list_app_files first to see the project structure (paths only; these are Astro sites: src/pages/*.astro, src/data/*.json, src/components/*.astro, public/*).
 
 THE LOOP
 1. Find the site. If the user names it by address ("serrureriesk.ch", "mysite.kleap.io"), call find_app FIRST. If find_app returns NOT_FOUND, the site isn't on this account or isn't connected yet — fall back to list_apps (supports ?q=) or ask the user. Otherwise use list_apps.
-2. Build or change it:
-   - New site: create_app(prompt). Its response includes app_id AND a task_id right away.
-   - Change an existing site: modify_app(app_id, message) — describe the OUTCOME; the AI writes every file.
-   Both return a task_id. Call check_task(task_id) — it LONG-POLLS by default (holds up to 50s, default 45, and returns the instant the build finishes), so just call it again while status is queued/processing. A full build is ~5-15 min, NOT instant, so calling check_task ~10-20 times in a row through one build is EXPECTED — that is normal waiting, not a "loop" (the loop warnings below are only about retrying failed tasks). For a fully hands-off flow, create_app/modify_app also accept a webhook_url that is POSTed when the task finishes.
+2. Build or change it — two paths:
+   - DETERMINISTIC (your code): write_files(app_id, [{path, content}, ...]) to push exact files, then publish_app(app_id) to build + deploy. No task, no stall. Best for adding/scaffolding pages you can write yourself.
+   - AI (Kleap writes it): create_app(prompt) for a brand-new site, or modify_app(app_id, message) to change one. These return a task_id. Call check_task(task_id) — it LONG-POLLS by default (holds up to 50s, default 45, and returns the instant the build finishes), so just call it again while status is queued/processing. A full build is ~5-15 min, NOT instant, so calling check_task ~10-20 times in a row through one build is EXPECTED — that is normal waiting, not a "loop" (the loop warnings below are only about retrying failed tasks). For a fully hands-off flow, create_app/modify_app also accept a webhook_url that is POSTed when the task finishes.
 3. When status="completed", the change is already BUILT AND LIVE at the production URL — create_app and modify_app auto-deploy. (publish_app + get_publish_status only force/verify a re-publish; you normally don't need them after a build.) connect_domain attaches a domain the user already owns (the app must be live first).
 
 ON FAILURE (check_task status="failed"): error.code is one of:
@@ -340,14 +368,13 @@ ERRORS BEFORE A TASK STARTS (HTTP errors thrown by create_app/modify_app, with a
 
 Send ONE coherent change per modify_app call.
 
-MANY SIMILAR PAGES / PROGRAMMATIC SEO — read this before you start:
-Do NOT create hundreds of pages with hundreds of calls — it stalls and is the wrong approach. In ONE modify_app call, ask the AI to add a DYNAMIC ROUTE + a DATA FILE. Example:
-  "Add a dynamic Astro route at src/pages/[service]/[city].astro driven by a data file src/data/locations.json containing these entries: <paste your full list>. Each page renders the service + city, localized intro, an FAQ and a contact CTA. Also add a /services index page linking to all of them."
-One instruction generates ALL the pages from the data, scales to thousands, deploys once. Up to a few hundred entries inline in one call is fine; for thousands, add them in batches via follow-up modify_app calls. This is THE correct way to do programmatic SEO on Kleap.
+MANY PAGES / PROGRAMMATIC SEO — read this before you start:
+BEST (deterministic, no stall): use write_files. Generate, with YOUR own model, a dynamic Astro route + a data file, and push them in one write_files call, then publish_app. Example files: src/pages/[service]/[city].astro (a layout that maps over the data) + src/data/locations.json (your full list). One write_files + one publish_app ships every page, scales to thousands, costs no Kleap credits, and cannot stall. This is THE recommended path — especially since asking the AI to scaffold new pages can stall.
+ALTERNATIVE (let Kleap's AI do it): ONE modify_app call asking for "a dynamic route src/pages/[service]/[city].astro driven by src/data/locations.json with <your list>, plus a /services index linking them." Never make N create/modify calls (one per page) — that stalls.
 
 rename_app changes only the display name — the live URL never changes. There is no delete tool, by design.
 
-KEYS & SCOPES: this server can't manage API keys. Users create and SCOPE keys in Kleap (Settings -> MCP / API access): pick Read-only, Build, or Full. Read-only allows only the read tools (list_apps, find_app, get_app, list_app_files, get_publish_status, check_domain, search_domains, get_credits) and a write tool with a read-only key returns 401/403; Build/Full additionally allow create_app, modify_app, rename_app, publish_app, connect_domain. So for a read-only agent, tell the user to generate a Read-only key there. Buying domains is never included by default.`;
+KEYS & SCOPES: this server can't manage API keys. Users create and SCOPE keys in Kleap (Settings -> MCP / API access): pick Read-only, Build, or Full. Read-only allows only the read tools (list_apps, find_app, get_app, list_app_files, get_publish_status, check_domain, search_domains, get_credits) and a write tool with a read-only key returns 401/403; Build/Full additionally allow create_app, modify_app, write_files, rename_app, publish_app, connect_domain. So for a read-only agent, tell the user to generate a Read-only key there. Buying domains is never included by default.`;
 
 const server = new Server(
   { name: "kleap", version: "1.0.7" },
