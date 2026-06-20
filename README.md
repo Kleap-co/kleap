@@ -34,7 +34,7 @@ MCP / API access → Generate MCP key** (`kleap_live_sk_...`).
   "mcpServers": {
     "kleap": {
       "command": "npx",
-      "args": ["-y", "github:Kleap-co/kleap"],
+      "args": ["-y", "kleap"],
       "env": { "KLEAP_API_KEY": "kleap_live_sk_..." }
     }
   }
@@ -50,7 +50,7 @@ MCP / API access → Generate MCP key** (`kleap_live_sk_...`).
   "mcpServers": {
     "kleap": {
       "command": "npx",
-      "args": ["-y", "github:Kleap-co/kleap"],
+      "args": ["-y", "kleap"],
       "env": { "KLEAP_API_KEY": "kleap_live_sk_..." }
     }
   }
@@ -62,7 +62,7 @@ MCP / API access → Generate MCP key** (`kleap_live_sk_...`).
 <summary><b>Claude Code</b> — one command</summary>
 
 ```bash
-claude mcp add kleap -e KLEAP_API_KEY=kleap_live_sk_... -- npx -y github:Kleap-co/kleap
+claude mcp add kleap -e KLEAP_API_KEY=kleap_live_sk_... -- npx -y kleap
 ```
 </details>
 
@@ -74,7 +74,7 @@ claude mcp add kleap -e KLEAP_API_KEY=kleap_live_sk_... -- npx -y github:Kleap-c
   "mcpServers": {
     "kleap": {
       "command": "npx",
-      "args": ["-y", "github:Kleap-co/kleap"],
+      "args": ["-y", "kleap"],
       "env": { "KLEAP_API_KEY": "kleap_live_sk_..." }
     }
   }
@@ -90,7 +90,7 @@ claude mcp add kleap -e KLEAP_API_KEY=kleap_live_sk_... -- npx -y github:Kleap-c
   "mcpServers": {
     "kleap": {
       "command": "npx",
-      "args": ["-y", "github:Kleap-co/kleap"],
+      "args": ["-y", "kleap"],
       "env": { "KLEAP_API_KEY": "kleap_live_sk_..." }
     }
   }
@@ -105,9 +105,8 @@ Add the hosted connector at **`https://kleap.co/api/mcp`** and authorize with
 OAuth (or paste your `kleap_live_sk_` key). Same tools, no install.
 </details>
 
-> Every stdio config is identical — `npx -y github:Kleap-co/kleap` + a
-> `KLEAP_API_KEY` env var — so any MCP client works. Once published to npm the
-> install shortens to `"args": ["-y", "kleap"]`.
+> Every stdio config is identical — `npx -y kleap` + a `KLEAP_API_KEY` env var —
+> so any MCP client works.
 
 **Least-privilege keys:** when you generate a key, pick a scope — **Read-only**
 (inspect sites, no changes), **Build**, or **Full**. Buying domains is never
@@ -125,7 +124,7 @@ Works with **any MCP-compatible agent**: Claude · ChatGPT · Cursor · Claude C
 
 ## Tools
 
-**Find & build** — `find_app` · `create_app` · `modify_app` · `rename_app` · `check_task` · `retry_task`
+**Find & build** — `find_app` · `create_app` · `modify_app` · `write_files` · `rename_app` · `check_task` · `retry_task`
 **Publish & domains** — `publish_app` · `get_publish_status` · `search_domains` · `check_domain` · `connect_domain`
 **Account** — `list_apps` · `get_app` · `list_app_files` · `get_credits`
 
@@ -134,6 +133,7 @@ Works with **any MCP-compatible agent**: Claude · ChatGPT · Cursor · Claude C
 | `find_app` | Resolve a domain / URL / slug → app_id in one call |
 | `create_app` | Create an Astro site from a prompt → returns a task (auto-deploys live) |
 | `modify_app` | Ask the app's AI to change it → returns a task |
+| `write_files` | Write exact files directly (**your** code, deterministic) → then `publish_app` |
 | `rename_app` | Rename the display name (URL stays the same) |
 | `check_task` | Long-poll a create/modify task to completion (`wait` up to 50s) |
 | `retry_task` | Resume a failed/stalled build from partial state (new task_id) |
@@ -149,18 +149,20 @@ App arguments are snake_case: `app_id`, `task_id`, `prompt`, `message`, `visibil
 
 ## Recipes
 
-**You instruct the AI — you never write files.** There is no file-write tool by
-design; describe the outcome and Kleap's AI writes, builds, and deploys it.
+**Two ways to put code on a site — pick per task:**
+- **`write_files` (deterministic):** *your* model writes the exact file contents; you push them and Kleap builds + deploys as-is. No Kleap-AI step → no Kleap credits, never stalls. Then `publish_app`. Unlike Lovable/v0/Bolt, your agent can write the code itself.
+- **`modify_app` (Kleap's AI):** describe the outcome in plain English and Kleap's AI writes it. Like Lovable's message-passing — kept for when you'd rather it figure out the change.
 
-- **Edit a site named by its address** — `find_app("mysite.ch")` → `modify_app(app_id, "…")` → `check_task(task_id)`.
-- **Hundreds of pages (programmatic SEO)** — do **not** loop `create_app`. In one
-  `modify_app`, ask for a *dynamic route + a data file*:
-  > *"Add a dynamic Astro route `src/pages/[service]/[city].astro` driven by `src/data/locations.json` with these 165 entries: … Each page renders the service, city, an FAQ and a CTA; add a `/services` index linking them all."*
-  One call generates every page and scales to thousands.
+Either way Kleap hosts it (build, deploy, SSL, DB, auth, domains, verified-live).
+
+- **Edit a site named by its address** — `find_app("mysite.ch")` → `modify_app(app_id, "…")` → `check_task(task_id, wait=45)`.
+- **Many pages (programmatic SEO) — BEST:** generate a dynamic route + a data file with your own model and push them in one `write_files`, then `publish_app`:
+  > `write_files(app_id, [{ path: "src/pages/[service]/[city].astro", content: … }, { path: "src/data/locations.json", content: … }])` → `publish_app(app_id)`
+  Deterministic, scales to thousands, no stall, no credits. (Or ask Kleap's AI to do the same in one `modify_app` — never loop one call per page.)
 - **Don't babysit a 5-15 min build** — `check_task` long-polls (default `wait=45`),
   or pass a `webhook_url` to `create_app` / `modify_app` for a fully hands-off flow.
-- **A build failed** — `TASK_TIMEOUT`/`STALE_TASK` = transient, call `retry_task`
-  (poll the **new** task_id it returns). `TASK_FAILED` = read the message, retry once.
+- **A build failed** — `TASK_TIMEOUT`/`STALE_TASK` = transient, call `retry_task`; it
+  returns a **new** task_id — poll *that* one. `TASK_FAILED` = read the message, retry once.
 
 ## The verified-live guarantee
 
@@ -170,7 +172,9 @@ its live URL — otherwise it rolls back and reports "not confirmed live." Your
 agent can never hand a user a dead link.
 
 If `check_task` reports `failed` (a transient generation stall), call `retry_task`
-with the same `task_id` to resume from where it stopped — partial work is kept.
+with that `task_id` to resume from where it stopped — it returns a **new** task_id
+to poll, and partial work is kept. Or skip the AI entirely and `write_files` the
+exact code yourself, then `publish_app`.
 
 ## FAQ
 
@@ -190,7 +194,7 @@ ChatGPT (hosted connector), and others.
 Node ≥ 18. Run it directly:
 
 ```bash
-KLEAP_API_KEY=kleap_live_sk_... npx -y github:Kleap-co/kleap
+KLEAP_API_KEY=kleap_live_sk_... npx -y kleap
 # → [kleap-mcp] ready (stdio) → https://kleap.co. Tools: list_apps, ...
 ```
 
