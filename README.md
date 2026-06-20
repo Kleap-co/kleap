@@ -25,6 +25,28 @@ your own `KLEAP_API_KEY` from the environment and talks only to `kleap.co`.
 
 ## Quick start
 
+### Easiest — connect with OAuth, no key
+
+Add the hosted connector and sign in. **Nothing to generate, nothing to paste** —
+you authorize Kleap in your browser like any other app. Works in Claude Desktop,
+ChatGPT and Cursor.
+
+```
+https://kleap.co/api/mcp
+```
+
+- **Claude Desktop** — Settings → Connectors → **Add custom connector** → paste the URL → **Connect** → sign in to Kleap.
+- **ChatGPT** — Settings → Connectors → add the URL → authorize with OAuth.
+- **Cursor** — Settings → **MCP** → Add server → paste the URL → authorize.
+
+That's it — same 16 tools, no API key. Skip straight to step 3.
+
+---
+
+### Or — local CLI with an API key
+
+Prefer a local process (or scripting the REST API directly)? Use a key.
+
 **1. Get an API key** — at [kleap.co](https://kleap.co) → **Settings → API key →
 MCP / API access → Generate MCP key** (`kleap_live_sk_...`).
 
@@ -182,10 +204,15 @@ exact code yourself, then `publish_app`.
 
 ## FAQ
 
-**Is it safe?** Yes. The connection uses *your* private `kleap_live_sk_` key; an
-agent can only touch your own Kleap apps. The key stays in your local client
-config, is sent only to `kleap.co` over HTTPS, and is revocable anytime in
-**Settings → API key**. Nothing is written to disk.
+**Do I need an API key?** No. The easiest path is the OAuth connector
+(`https://kleap.co/api/mcp`) — you sign in with your browser and never copy a
+key. An API key is only needed for the local CLI / direct REST use.
+
+**Is it safe?** Yes. Whether you connect with OAuth or an API key, an agent can
+only ever touch *your own* Kleap apps. OAuth tokens and `kleap_live_sk_` keys are
+scoped, sent only to `kleap.co` over HTTPS, and revocable anytime in
+**Settings → API key**. Keys stay in your local client config; nothing else is
+written to disk.
 
 **How much does it cost?** Connecting is free. Builds and edits use Kleap credits
 (`get_credits` reports your balance) — see [pricing](https://kleap.co/pricing).
