@@ -28,18 +28,187 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { createServer } from "node:http";
+import { randomBytes, createHash } from "node:crypto";
+import { spawn } from "node:child_process";
+import { readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const API_URL = (process.env.KLEAP_API_URL || "https://kleap.co").replace(
   /\/$/,
   "",
 );
-const API_KEY = process.env.KLEAP_API_KEY;
 
-if (!API_KEY) {
+// Auth token used on every API call. Resolved at boot (below): an explicit
+// KLEAP_API_KEY env var wins; otherwise the OAuth token saved by
+// `kleap auth login`. Mutable so a refresh can swap it in.
+let AUTH_TOKEN = null;
+
+// ── Stored credentials (~/.kleap/config.json) ───────────────────────────────
+const CONFIG_DIR = join(homedir(), ".kleap");
+const CONFIG_PATH = join(CONFIG_DIR, "config.json");
+function readConfig() {
+  try {
+    return JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+  } catch {
+    return {};
+  }
+}
+function writeConfig(cfg) {
+  mkdirSync(CONFIG_DIR, { recursive: true });
+  writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  try {
+    chmodSync(CONFIG_PATH, 0o600);
+  } catch {}
+}
+
+// ── OAuth (browser, PKCE + http loopback, RFC 8252) — `kleap auth login` ─────
+const OAUTH_SCOPES = "apps:read apps:create apps:update messages:create tasks:read";
+const b64url = (buf) =>
+  Buffer.from(buf)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+function openBrowser(url) {
+  const plat = process.platform;
+  const cmd = plat === "darwin" ? "open" : plat === "win32" ? "cmd" : "xdg-open";
+  const args = plat === "win32" ? ["/c", "start", "", url] : [url];
+  try {
+    spawn(cmd, args, { stdio: "ignore", detached: true }).unref();
+  } catch {}
+}
+async function oauthPost(path, payload) {
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const text = await res.text();
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch {}
+  if (!res.ok) {
+    const msg = json?.error_description || json?.error || text.slice(0, 200);
+    throw new Error(`${path} → HTTP ${res.status}: ${msg}`);
+  }
+  return json || {};
+}
+async function authLogin() {
+  const verifier = b64url(randomBytes(32));
+  const challenge = b64url(createHash("sha256").update(verifier).digest());
+  const state = b64url(randomBytes(16));
+  // 1. bind a loopback server first so we know the redirect port
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
+  // 2. register a native client (Dynamic Client Registration) for that redirect
+  const reg = await oauthPost("/api/oauth/register", {
+    client_name: "Kleap CLI",
+    redirect_uris: [redirectUri],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none",
+  });
+  const clientId = reg.client_id;
+  // 3. wait for the browser to redirect back with the code
+  const codePromise = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      try {
+        server.close();
+      } catch {}
+      reject(new Error("login timed out after 5 minutes"));
+    }, 300000);
+    server.on("request", (req, res) => {
+      const u = new URL(req.url, redirectUri);
+      if (u.pathname !== "/callback") {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      const err = u.searchParams.get("error");
+      const code = u.searchParams.get("code");
+      const st = u.searchParams.get("state");
+      res.writeHead(err ? 400 : 200, {
+        "Content-Type": "text/html; charset=utf-8",
+      });
+      res.end(
+        `<!doctype html><meta charset="utf-8"><body style="font-family:system-ui,sans-serif;text-align:center;padding:64px;color:#111"><h2 style="color:${err ? "#cc0033" : "#16b364"}">${err ? "Sign-in failed" : "Kleap connected"}</h2><p>${err ? "Return to the terminal and try again." : "You can close this tab and return to the terminal."}</p></body>`,
+      );
+      clearTimeout(timer);
+      try {
+        server.close();
+      } catch {}
+      if (err) return reject(new Error(err));
+      if (st !== state) return reject(new Error("state mismatch (possible CSRF)"));
+      resolve(code);
+    });
+  });
+  // 4. open the browser to the authorize page
+  const authUrl =
+    `${API_URL}/api/oauth/authorize?response_type=code` +
+    `&client_id=${encodeURIComponent(clientId)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&scope=${encodeURIComponent(OAUTH_SCOPES)}` +
+    `&state=${state}&code_challenge=${challenge}&code_challenge_method=S256`;
   console.error(
-    "[kleap-mcp] Missing KLEAP_API_KEY (expected a Bearer kleap_live_sk_... key).",
+    "[kleap] Opening your browser to sign in…\n[kleap] If it doesn't open, paste this URL:\n" +
+      authUrl +
+      "\n",
   );
-  process.exit(1);
+  openBrowser(authUrl);
+  const code = await codePromise;
+  // 5. exchange the code for tokens (PKCE)
+  const tok = await oauthPost("/api/oauth/token", {
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: redirectUri,
+    client_id: clientId,
+    code_verifier: verifier,
+  });
+  const cfg = readConfig();
+  cfg.oauth = {
+    client_id: clientId,
+    access_token: tok.access_token,
+    refresh_token: tok.refresh_token || null,
+    expires_at: tok.expires_in ? Date.now() + tok.expires_in * 1000 : null,
+    api_url: API_URL,
+  };
+  writeConfig(cfg);
+  console.error(
+    "[kleap] Signed in. Token saved to ~/.kleap/config.json — `npx kleap` now works with no API key.",
+  );
+}
+async function refreshIfNeeded(cfg) {
+  const o = cfg.oauth;
+  if (!o) return null;
+  if (!o.refresh_token || !o.expires_at) return o.access_token || null;
+  if (o.expires_at > Date.now() + 60000) return o.access_token; // still valid
+  try {
+    const tok = await oauthPost("/api/oauth/token", {
+      grant_type: "refresh_token",
+      refresh_token: o.refresh_token,
+      client_id: o.client_id,
+    });
+    o.access_token = tok.access_token;
+    if (tok.refresh_token) o.refresh_token = tok.refresh_token;
+    o.expires_at = tok.expires_in ? Date.now() + tok.expires_in * 1000 : null;
+    writeConfig(cfg);
+    return o.access_token;
+  } catch {
+    return o.access_token; // fall back; the server will 401 if it's truly dead
+  }
+}
+async function resolveToken() {
+  if (process.env.KLEAP_API_KEY) return process.env.KLEAP_API_KEY; // explicit key wins
+  const cfg = readConfig();
+  if (cfg.oauth?.access_token) return await refreshIfNeeded(cfg);
+  return null;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -60,7 +229,7 @@ async function api(method, path, body, { retries = 2, timeoutMs = 60000 } = {}) 
       const res = await fetch(url, {
         method,
         headers: {
-          Authorization: `Bearer ${API_KEY}`,
+          Authorization: `Bearer ${AUTH_TOKEN}`,
           Accept: "application/json",
           ...(body ? { "Content-Type": "application/json" } : {}),
         },
@@ -435,6 +604,49 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     };
   }
 });
+
+// ── CLI dispatch ────────────────────────────────────────────────────────────
+// `kleap auth <login|logout|status>` runs and exits; no args = the MCP server.
+const cmd = process.argv.slice(2);
+if (cmd[0] === "auth") {
+  const sub = cmd[1];
+  if (sub === "login") {
+    await authLogin();
+    process.exit(0);
+  }
+  if (sub === "logout") {
+    const c = readConfig();
+    delete c.oauth;
+    writeConfig(c);
+    console.error("[kleap] Signed out (cleared ~/.kleap/config.json).");
+    process.exit(0);
+  }
+  if (sub === "status") {
+    const t = await resolveToken();
+    if (!t) {
+      console.error("[kleap] Not signed in. Run `npx kleap auth login`.");
+      process.exit(1);
+    }
+    console.error(
+      process.env.KLEAP_API_KEY
+        ? "[kleap] Authenticated via KLEAP_API_KEY (env)."
+        : "[kleap] Signed in via OAuth (~/.kleap/config.json).",
+    );
+    process.exit(0);
+  }
+  console.error("[kleap] Usage: kleap auth <login|logout|status>");
+  process.exit(1);
+}
+
+// Default: run the stdio MCP server. Resolve auth first.
+AUTH_TOKEN = await resolveToken();
+if (!AUTH_TOKEN) {
+  console.error(
+    "[kleap-mcp] Not signed in. Run `npx kleap auth login` (opens your browser, no API key needed),\n" +
+      "             or set KLEAP_API_KEY=kleap_live_sk_... (https://kleap.co/settings/api-key).",
+  );
+  process.exit(1);
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

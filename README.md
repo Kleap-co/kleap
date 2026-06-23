@@ -43,9 +43,28 @@ That's it — same 17 tools, no API key. Skip straight to step 3.
 
 ---
 
+### Or — local CLI, sign in with your browser (no key)
+
+Prefer a local stdio process? Sign in once — no key to generate or paste:
+
+```
+npx kleap auth login
+```
+
+This opens your browser, you authorize Kleap, and the token is saved to
+`~/.kleap/config.json`. After that, `npx -y kleap` just works. (`kleap auth
+logout` / `kleap auth status` are there too.) Then add a keyless stdio entry to
+your client, e.g. Claude Desktop `claude_desktop_config.json`:
+
+```json
+{ "mcpServers": { "kleap": { "command": "npx", "args": ["-y", "kleap"] } } }
+```
+
+---
+
 ### Or — local CLI with an API key
 
-Prefer a local process (or scripting the REST API directly)? Use a key.
+Prefer a key (e.g. for CI or scripting the REST API directly)?
 
 **1. Get an API key** — at [kleap.co](https://kleap.co) → **Settings → API key →
 MCP / API access → Generate MCP key** (`kleap_live_sk_...`).

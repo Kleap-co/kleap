@@ -2,6 +2,12 @@
 
 All notable changes to the Kleap MCP server / CLI.
 
+## [1.1.0] — 2026-06-23
+- `kleap auth login` — sign in with your browser (OAuth, PKCE, RFC 8252 loopback),
+  no API key to copy. The token is saved to `~/.kleap/config.json` and used
+  automatically by `npx kleap`; `kleap auth logout` / `kleap auth status` too.
+- `KLEAP_API_KEY` still works and takes precedence (nothing breaks).
+
 ## [1.0.8] — 2026-06-20
 - Server `instructions` (the agent "skill"): how Kleap works, the find→build→poll→publish
   loop, the programmatic-SEO pattern (one dynamic route + data file, not N page calls),
