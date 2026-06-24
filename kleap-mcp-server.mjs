@@ -181,7 +181,7 @@ async function authLogin() {
   };
   writeConfig(cfg);
   console.error(
-    "[kleap] Signed in. Token saved to ~/.kleap/config.json — `npx kleap` now works with no API key.",
+    "[kleap] Signed in. Token saved to ~/.kleap/config.json — `npx @eliottd/kleap` now works with no API key.",
   );
 }
 async function refreshIfNeeded(cfg) {
@@ -624,7 +624,7 @@ if (cmd[0] === "auth") {
   if (sub === "status") {
     const t = await resolveToken();
     if (!t) {
-      console.error("[kleap] Not signed in. Run `npx kleap auth login`.");
+      console.error("[kleap] Not signed in. Run `npx @eliottd/kleap auth login`.");
       process.exit(1);
     }
     console.error(
@@ -642,7 +642,7 @@ if (cmd[0] === "auth") {
 AUTH_TOKEN = await resolveToken();
 if (!AUTH_TOKEN) {
   console.error(
-    "[kleap-mcp] Not signed in. Run `npx kleap auth login` (opens your browser, no API key needed),\n" +
+    "[kleap-mcp] Not signed in. Run `npx @eliottd/kleap auth login` (opens your browser, no API key needed),\n" +
       "             or set KLEAP_API_KEY=kleap_live_sk_... (https://kleap.co/settings/api-key).",
   );
   process.exit(1);

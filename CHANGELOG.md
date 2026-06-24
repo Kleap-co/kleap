@@ -2,6 +2,9 @@
 
 All notable changes to the Kleap MCP server / CLI.
 
+## [1.1.2] — 2026-06-24
+- Fix: in-CLI messages reference `npx @eliottd/kleap` (the real install name).
+
 ## [1.1.1] — 2026-06-24
 - Docs: install as `@eliottd/kleap` (npm blocked the unscoped name). No code change.
 
