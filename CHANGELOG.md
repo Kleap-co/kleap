@@ -2,6 +2,9 @@
 
 All notable changes to the Kleap MCP server / CLI.
 
+## [1.1.1] — 2026-06-24
+- Docs: install as `@eliottd/kleap` (npm blocked the unscoped name). No code change.
+
 ## [1.1.0] — 2026-06-23
 - `kleap auth login` — sign in with your browser (OAuth, PKCE, RFC 8252 loopback),
   no API key to copy. The token is saved to `~/.kleap/config.json` and used
