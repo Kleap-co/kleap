@@ -48,16 +48,16 @@ That's it — same 17 tools, no API key. Skip straight to step 3.
 Prefer a local stdio process? Sign in once — no key to generate or paste:
 
 ```
-npx kleap auth login
+npx @eliottd/kleap auth login
 ```
 
 This opens your browser, you authorize Kleap, and the token is saved to
-`~/.kleap/config.json`. After that, `npx -y kleap` just works. (`kleap auth
+`~/.kleap/config.json`. After that, `npx -y @eliottd/kleap` just works. (`kleap auth
 logout` / `kleap auth status` are there too.) Then add a keyless stdio entry to
 your client, e.g. Claude Desktop `claude_desktop_config.json`:
 
 ```json
-{ "mcpServers": { "kleap": { "command": "npx", "args": ["-y", "kleap"] } } }
+{ "mcpServers": { "kleap": { "command": "npx", "args": ["-y", "@eliottd/kleap"] } } }
 ```
 
 ---
@@ -79,7 +79,7 @@ MCP / API access → Generate MCP key** (`kleap_live_sk_...`).
   "mcpServers": {
     "kleap": {
       "command": "npx",
-      "args": ["-y", "kleap"],
+      "args": ["-y", "@eliottd/kleap"],
       "env": { "KLEAP_API_KEY": "kleap_live_sk_..." }
     }
   }
@@ -95,7 +95,7 @@ MCP / API access → Generate MCP key** (`kleap_live_sk_...`).
   "mcpServers": {
     "kleap": {
       "command": "npx",
-      "args": ["-y", "kleap"],
+      "args": ["-y", "@eliottd/kleap"],
       "env": { "KLEAP_API_KEY": "kleap_live_sk_..." }
     }
   }
@@ -107,7 +107,7 @@ MCP / API access → Generate MCP key** (`kleap_live_sk_...`).
 <summary><b>Claude Code</b> — one command</summary>
 
 ```bash
-claude mcp add kleap -e KLEAP_API_KEY=kleap_live_sk_... -- npx -y kleap
+claude mcp add kleap -e KLEAP_API_KEY=kleap_live_sk_... -- npx -y @eliottd/kleap
 ```
 </details>
 
@@ -119,7 +119,7 @@ claude mcp add kleap -e KLEAP_API_KEY=kleap_live_sk_... -- npx -y kleap
   "mcpServers": {
     "kleap": {
       "command": "npx",
-      "args": ["-y", "kleap"],
+      "args": ["-y", "@eliottd/kleap"],
       "env": { "KLEAP_API_KEY": "kleap_live_sk_..." }
     }
   }
@@ -135,7 +135,7 @@ claude mcp add kleap -e KLEAP_API_KEY=kleap_live_sk_... -- npx -y kleap
   "mcpServers": {
     "kleap": {
       "command": "npx",
-      "args": ["-y", "kleap"],
+      "args": ["-y", "@eliottd/kleap"],
       "env": { "KLEAP_API_KEY": "kleap_live_sk_..." }
     }
   }
@@ -150,7 +150,7 @@ Add the hosted connector at **`https://kleap.co/api/mcp`** and authorize with
 OAuth (or paste your `kleap_live_sk_` key). Same tools, no install.
 </details>
 
-> Every stdio config is identical — `npx -y kleap` + a `KLEAP_API_KEY` env var —
+> Every stdio config is identical — `npx -y @eliottd/kleap` + a `KLEAP_API_KEY` env var —
 > so any MCP client works.
 
 **Least-privilege keys:** when you generate a key, pick a scope — **Read-only**
@@ -246,7 +246,7 @@ ChatGPT (hosted connector), and others.
 Node ≥ 18. Run it directly:
 
 ```bash
-KLEAP_API_KEY=kleap_live_sk_... npx -y kleap
+KLEAP_API_KEY=kleap_live_sk_... npx -y @eliottd/kleap
 # → [kleap-mcp] ready (stdio) → https://kleap.co. Tools: list_apps, ...
 ```
 

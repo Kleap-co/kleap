@@ -1,5 +1,5 @@
 {
-  "name": "kleap",
+  "name": "@eliottd/kleap",
   "version": "1.1.0",
   "description": "Website infrastructure for AI agents. Drive Kleap from any MCP client (Claude, ChatGPT, Cursor) — create, edit and publish real websites, with the verified-live guarantee.",
   "type": "module",
